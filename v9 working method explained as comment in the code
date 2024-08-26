@@ -1,0 +1,162 @@
+/*To prioritize turning D4 (GPIO 4) and D5 (GPIO 5) LOW immediately when a specific button on the Blynk app is pressed, we need to ensure that this action happens promptly, regardless of other ongoing tasks.
+
+Plan:
+High-priority Button: Add another button on Blynk (linked to a Virtual Pin, e.g., V6).
+Immediate Response: When this button is pressed, D4 (GPIO 4) and D5 (GPIO 5) will be set to LOW immediately, with higher priority than any other task.
+To accomplish this, we will add a BLYNK_WRITE(V6) function to handle this task, ensuring that the action to set D4 and D5 LOW is executed immediately.
+
+Updated Code:
+cpp
+
+
+
+Copy code*/
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
+#include <BlynkSimpleEsp8266.h>
+#include <ArduinoOTA.h>
+#include <BlynkTimer.h>  // Use BlynkTimer for handling timed tasks
+
+// Replace with your network credentials and Blynk Auth Token
+const char* ssid = "Your_SSID";
+const char* password = "Your_PASSWORD";
+char auth[] = "Your_BLYNK_AUTH_TOKEN";  // Blynk authentication token
+
+// Define the digital pins you want to control
+const int pinD1 = 5;  // GPIO 5 (D1)
+const int pinD2 = 4;  // GPIO 4 (D2)
+
+// Timer object for handling timed tasks
+BlynkTimer timer;
+
+// Variables for tracking pin states
+unsigned long pinD1HighMillis = 0;  // Time when D1 (GPIO 5) was set HIGH
+unsigned long pinD2HighMillis = 0;  // Time when D2 (GPIO 4) was set HIGH
+
+bool pinD1IsHigh = false;  // Tracks whether D1 (GPIO 5) is currently HIGH
+bool pinD2IsHigh = false;  // Tracks whether D2 (GPIO 4) is currently HIGH
+
+void setup() {
+  Serial.begin(9600);  // Set baud rate to 9600
+
+  // Set up the control pins as output
+  pinMode(pinD1, OUTPUT);
+  pinMode(pinD2, OUTPUT);
+
+  digitalWrite(pinD1, LOW);  // Initially turn off D1
+  digitalWrite(pinD2, LOW);  // Initially turn off D2
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);  // Use delay in setup since it's a one-time action
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, password);
+
+  // Initialize OTA
+  ArduinoOTA.begin();
+  Serial.println("OTA Ready");
+
+  // Setup timer to check if pins need to be turned off
+  timer.setInterval(100L, handlePinTimers);  // Check every 100 milliseconds
+
+  Serial.println("Setup complete!");
+}
+
+void loop() {
+  Blynk.run();       // Handle Blynk-related events
+  timer.run();       // Run the timer
+  ArduinoOTA.handle();  // Handle OTA updates
+}
+
+// Blynk function to control pin D1 (GPIO 5) via virtual pin V4
+BLYNK_WRITE(V4) {
+  int pinValue = param.asInt();  // Get the value sent from the Blynk app
+  if (pinValue == 1) {
+    digitalWrite(pinD1, HIGH);  // Turn ON pin D1 (GPIO 5)
+    pinD1HighMillis = millis();  // Record the time D1 was set HIGH
+    pinD1IsHigh = true;  // Set the flag to indicate D1 is HIGH
+    Serial.println("Pin D1 (GPIO 5) turned ON via Blynk for 5 seconds.");
+  }
+}
+
+// Blynk function to control pin D2 (GPIO 4) via virtual pin V5
+BLYNK_WRITE(V5) {
+  int pinValue = param.asInt();  // Get the value sent from the Blynk app
+  if (pinValue == 1) {
+    digitalWrite(pinD2, HIGH);  // Turn ON pin D2 (GPIO 4)
+    pinD2HighMillis = millis();  // Record the time D2 was set HIGH
+    pinD2IsHigh = true;  // Set the flag to indicate D2 is HIGH
+    Serial.println("Pin D2 (GPIO 4) turned ON via Blynk for 5 seconds.");
+  }
+}
+
+// Blynk function to turn both D4 (GPIO 4) and D5 (GPIO 5) LOW immediately (high priority) via virtual pin V6
+BLYNK_WRITE(V6) {
+  int pinValue = param.asInt();  // Get the value sent from the Blynk app
+  if (pinValue == 1) {
+    // Immediately turn off both pins
+    digitalWrite(pinD1, LOW);  // Turn OFF pin D1 (GPIO 5)
+    digitalWrite(pinD2, LOW);  // Turn OFF pin D2 (GPIO 4)
+
+    // Reset flags and stop the countdowns if they were active
+    pinD1IsHigh = false;
+    pinD2IsHigh = false;
+
+    Serial.println("Pin D1 (GPIO 5) and Pin D2 (GPIO 4) turned OFF immediately.");
+  }
+}
+
+// Function to handle the timers for turning off the pins after 5 seconds
+void handlePinTimers() {
+  unsigned long currentMillis = millis();
+
+  // Turn off pinD1 (GPIO 5) after 5 seconds
+  if (pinD1IsHigh && (currentMillis - pinD1HighMillis >= 5000)) {
+    digitalWrite(pinD1, LOW);  // Turn OFF pin D1 (GPIO 5)
+    pinD1IsHigh = false;  // Reset the flag
+    Serial.println("Pin D1 (GPIO 5) turned OFF after 5 seconds.");
+  }
+
+  // Turn off pinD2 (GPIO 4) after 5 seconds
+  if (pinD2IsHigh && (currentMillis - pinD2HighMillis >= 5000)) {
+    digitalWrite(pinD2, LOW);  // Turn OFF pin D2 (GPIO 4)
+    pinD2IsHigh = false;  // Reset the flag
+    Serial.println("Pin D2 (GPIO 4) turned OFF after 5 seconds.");
+  }
+}
+
+
+
+
+/*
+
+Explanation:
+New Button on Blynk (V6):
+
+We've added a new Virtual Pin V6 that will be linked to a button on the Blynk app. When this button is pressed, both D1 (GPIO 5) and D2 (GPIO 4) will be immediately turned LOW.
+This action is treated as a high-priority task, meaning it happens immediately when the button is pressed, regardless of any ongoing timers or other functions.
+High-Priority Behavior:
+
+The BLYNK_WRITE(V6) function is executed as soon as the button is pressed, and it turns off D1 and D2 immediately by calling digitalWrite(pinD1, LOW) and digitalWrite(pinD2, LOW).
+It also resets the flags pinD1IsHigh and pinD2IsHigh to ensure that the 5-second timers don't interfere after the high-priority action.
+Handling Other Buttons:
+
+Buttons linked to V4 and V5 still control D1 (GPIO 5) and D2 (GPIO 4) for 5 seconds.
+However, if the high-priority button linked to V6 is pressed, it will override any active timers and immediately turn off the pins.
+Using Blynk:
+Configure the App:
+
+Add a third Button Widget in the Blynk app linked to Virtual Pin V6. This will be the high-priority button that immediately turns off D1 and D2.
+Test the Behavior:
+
+Press the buttons linked to V4 and V5 to turn on D1 and D2 for 5 seconds.
+While the pins are HIGH, press the button linked to V6, and both pins should turn off immediately.
+This implementation ensures that turning off D1 and D2 happens instantly with high priority when the button linked to V6 is pressed. Let me know if you have further questions or need additional adjustments! 
+
+*/
