@@ -10,3 +10,4 @@ Stop button in the Blynk app will stop every thing( this is an escape if somethi
 
 I use virtual pins to connect NODEMCU to BYLNK app 
 
+V11: Button twice click feature 
