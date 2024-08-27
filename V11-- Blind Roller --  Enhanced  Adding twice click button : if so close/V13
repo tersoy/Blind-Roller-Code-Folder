@@ -1,0 +1,249 @@
+const int pinD1 = 4;  // GPIO 5 (D1)
+const int pinD2 = 5;  // GPIO 4 (D2)
+
+// Timezone offset in seconds (Example: UTC+3 = 10800 seconds)
+const long utcOffsetInSeconds = 10800;  // GMT+3 offset
+
+// Timer object for handling timed tasks
+BlynkTimer timer;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds, 60000);  // Sync every 60 seconds with UTC offset
+
+// Variables for tracking pin states and timers
+unsigned long pinD1HighMillis = 0;  // Time when D1 was set HIGH
+unsigned long pinD2HighMillis = 0;  // Time when D2 was set HIGH
+bool pinD1IsHigh = false;  // Tracks if D1 is HIGH
+bool pinD2IsHigh = false;  // Tracks if D2 is HIGH
+
+// Variables for triggering time-based GPIO control
+bool gpio5Triggered = false;
+bool gpio4Triggered = false;
+
+// Variables to track button presses for V4 (GPIO 4) and V5 (GPIO 5)
+bool v4ButtonHeld = false;
+bool v5ButtonHeld = false;
+
+unsigned long lastV4PressTime = 0;  // Last time V4 button was pressed and released
+unsigned long lastV5PressTime = 0;  // Last time V5 button was pressed and released
+
+void setup() {
+  Serial.begin(9600);  // Set baud rate to 9600
+
+  // Set up the control pins as output
+  pinMode(pinD1, OUTPUT);
+  pinMode(pinD2, OUTPUT);
+  digitalWrite(pinD1, LOW);  // Initially turn off D1
+  digitalWrite(pinD2, LOW);  // Initially turn off D2
+
+  // Connect to WiFi
+  connectToWiFi();
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, password);
+
+  // Initialize OTA for wireless updates
+  setupOTA();
+  Serial.println("OTA Ready");
+
+  // Initialize NTP Client
+  timeClient.begin();
+
+  // Setup timer to check time-based events and button events
+  timer.setInterval(100L, handlePinTimers);  // Check pin timers every 100 milliseconds
+  timer.setInterval(1000L, checkTimeEvents);  // Check time-based events every second
+
+  Serial.println("Setup complete!");
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWiFi();  // Attempt to reconnect if WiFi is lost
+  }
+
+  Blynk.run();       // Handle Blynk events
+  timer.run();       // Run the timers
+  ArduinoOTA.handle();  // Handle OTA updates
+  timeClient.update();  // Sync with NTP server
+  yield();  // Reset the watchdog timer regularly in the main loop
+}
+
+// Function to attempt WiFi connection
+void connectToWiFi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+
+  unsigned long startAttemptTime = millis();
+  
+  // Attempt to connect for 10 seconds
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+    Serial.print(".");
+    delay(500);
+    yield();  // Prevent watchdog reset during long connection attempts
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to WiFi");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nFailed to connect to WiFi. Retrying...");
+  }
+}
+
+// Function to setup OTA
+void setupOTA() {
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
+}
+
+// Function to check time-based events for GPIO control
+void checkTimeEvents() {
+  int currentHour = timeClient.getHours();
+  int currentMinute = timeClient.getMinutes();
+
+  // Check if it's 7:30 a.m. (07:30) and GPIO 5 has not been triggered
+  if (currentHour == 7 && currentMinute == 30 && !gpio5Triggered) {
+    digitalWrite(pinD1, HIGH);  // Turn ON pin D1 (GPIO 5)
+    gpio5Triggered = true;  // Ensure it's only triggered once
+    Serial.println("GPIO 5 (D1) turned ON at 7:30 a.m.");
+  }
+
+  // Check if it's 7:30 p.m. (19:30) and GPIO 4 has not been triggered
+  if (currentHour == 00 && currentMinute == 16 && !gpio4Triggered) {
+    digitalWrite(pinD2, HIGH);  // Turn ON pin D2 (GPIO 4)
+    gpio4Triggered = true;  // Ensure it's only triggered once
+    Serial.println("GPIO 4 (D2) turned ON at 19:30 p.m.");
+  }
+
+  // Reset triggers at midnight (00:00) to allow for next day's events
+  if (currentHour == 0 && currentMinute == 0) {
+    gpio5Triggered = false;
+    gpio4Triggered = false;
+    Serial.println("Triggers reset at midnight.");
+  }
+}
+
+// Blynk function to handle V4 (GPIO 4) button presses
+BLYNK_WRITE(V4) {
+  int value = param.asInt();  // Get the value sent from the Blynk app
+  
+  if (value == 1) {  // Button pressed
+    if (!v4ButtonHeld) {
+      v4ButtonHeld = true;
+      digitalWrite(pinD2, HIGH);  // Keep D2 HIGH while button is held
+      Serial.println("V4 button held, D2 HIGH.");
+    }
+  } else {  // Button released
+    v4ButtonHeld = false;
+    unsigned long currentTime = millis();
+    
+    // Check if the button was released within 1 second of last press
+    if (currentTime - lastV4PressTime <= 500) {
+      // Set D2 HIGH for 3 seconds
+      digitalWrite(pinD2, HIGH);
+      pinD2HighMillis = millis();
+      pinD2IsHigh = true;
+      Serial.println("V4 button pressed twice in one second! D2 set HIGH for 3 seconds.");
+    } else {
+      // Reset the release time for future double-press detection
+      lastV4PressTime = currentTime;
+      digitalWrite(pinD2, LOW);  // Turn off D2
+      Serial.println("V4 button released, D2 LOW.");
+    }
+  }
+}
+
+// Blynk function to handle V5 (GPIO 5) button presses
+BLYNK_WRITE(V5) {
+  int value = param.asInt();  // Get the value sent from the Blynk app
+  
+  if (value == 1) {  // Button pressed
+    if (!v5ButtonHeld) {
+      v5ButtonHeld = true;
+      digitalWrite(pinD1, HIGH);  // Keep D1 HIGH while button is held
+      Serial.println("V5 button held, D1 HIGH.");
+    }
+  } else {  // Button released
+    v5ButtonHeld = false;
+    unsigned long currentTime = millis();
+    
+    // Check if the button was released within 1 second of last press
+    if (currentTime - lastV5PressTime <= 1000) {
+      // Set D1 HIGH for 3 seconds
+      digitalWrite(pinD1, HIGH);
+      pinD1HighMillis = millis();
+      pinD1IsHigh = true;
+      Serial.println("V5 button pressed twice in one second! D1 set HIGH for 3 seconds.");
+    } else {
+      // Reset the release time for future double-press detection
+      lastV5PressTime = currentTime;
+      digitalWrite(pinD1, LOW);  // Turn off D1
+      Serial.println("V5 button released, D1 LOW.");
+    }
+  }
+}
+
+// Blynk function to immediately set both D2 and D1 LOW when V6 is pressed
+BLYNK_WRITE(V6) {
+  int value = param.asInt();  // Get the value sent from the Blynk app
+  
+  if (value == 1) {
+    // Immediately turn off both D1 and D2
+    digitalWrite(pinD1, LOW);
+    digitalWrite(pinD2, LOW);
+    pinD1IsHigh = false;  // Reset flags
+    pinD2IsHigh = false;
+    Serial.println("V6 pressed, D1 and D2 turned OFF immediately.");
+  }
+}
+
+// Function to handle the timers for turning off the pins after 3 seconds
+void handlePinTimers() {
+  unsigned long currentMillis = millis();
+
+  // Turn off pin D1 (GPIO 5) after 3 seconds
+  if (pinD1IsHigh && (currentMillis - pinD1HighMillis >= 3000)) {
+    digitalWrite(pinD1, LOW);  // Turn OFF pin D1
+    pinD1IsHigh = false;  // Reset the flag
+    Serial.println("Pin D1 (GPIO 5) turned OFF after 3 seconds.");
+  }
+
+  // Turn off pin D2 (GPIO 4) after 3 seconds
+  if (pinD2IsHigh && (currentMillis - pinD2HighMillis >= 3000)) {
+    digitalWrite(pinD2, LOW);  // Turn OFF pin D2
+    pinD2IsHigh = false;  // Reset the flag
+    Serial.println("Pin D2 (GPIO 4) turned OFF after 3 seconds.");
+  }
+}
