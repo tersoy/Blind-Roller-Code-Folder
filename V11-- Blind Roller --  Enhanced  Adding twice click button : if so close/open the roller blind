@@ -1,0 +1,211 @@
+
+
+
+#include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
+#include <BlynkSimpleEsp8266.h>
+#include <ArduinoOTA.h>
+#include <NTPClient.h>
+
+//Here Define BLYNK template info
+//Here Define Wifi credentials
+//Here Define char auth[] ="BLYNK_AUTH_TOKEN"
+// Define the digital pins you want to control
+
+const int pinD1 = 5;  // GPIO 5 (D1)
+const int pinD2 = 4;  // GPIO 4 (D2)
+
+// Timezone offset in seconds (Example: UTC+3 = 10800 seconds)
+const long utcOffsetInSeconds = 10800;  // Adjust this according to your time zone
+
+// Timer object for handling timed tasks
+BlynkTimer timer;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds, 60000);  // Sync every 60 seconds with UTC offset
+
+// Variables for tracking pin states and timers
+unsigned long pinD1HighMillis = 0;  // Time when D1 was set HIGH
+unsigned long pinD2HighMillis = 0;  // Time when D2 was set HIGH
+bool pinD1IsHigh = false;  // Tracks if D1 is HIGH
+bool pinD2IsHigh = false;  // Tracks if D2 is HIGH
+
+// Variables to track button presses for V4 (GPIO 4) and V5 (GPIO 5)
+int buttonV4PressCount = 0;
+unsigned long lastButtonV4PressTime = 0;
+
+int buttonV5PressCount = 0;
+unsigned long lastButtonV5PressTime = 0;
+
+void setup() {
+  Serial.begin(9600);  // Set baud rate to 9600
+
+  // Set up the control pins as output
+  pinMode(pinD1, OUTPUT);
+  pinMode(pinD2, OUTPUT);
+  digitalWrite(pinD1, LOW);  // Initially turn off D1
+  digitalWrite(pinD2, LOW);  // Initially turn off D2
+
+  // Connect to WiFi
+  connectToWiFi();
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, password);
+
+  // Initialize OTA for wireless updates
+  setupOTA();  // Call the setupOTA function to initialize OTA
+  Serial.println("OTA Ready");
+
+  // Initialize NTP Client
+  timeClient.begin();
+
+  // Setup timer to check time-based events and if pins need to be turned off after 5 seconds
+  timer.setInterval(100L, handlePinTimers);  // Check pin timers every 100 milliseconds
+
+  Serial.println("Setup complete!");
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWiFi();  // Attempt to reconnect if WiFi is lost
+  }
+
+  Blynk.run();       // Handle Blynk events
+  timer.run();       // Run the timers
+  ArduinoOTA.handle();  // Handle OTA updates
+  yield();  // Reset the watchdog timer regularly in the main loop
+}
+
+// Function to attempt WiFi connection
+void connectToWiFi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+
+  unsigned long startAttemptTime = millis();
+  
+  // Attempt to connect for 10 seconds
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+    Serial.print(".");
+    delay(500);
+    yield();  // Prevent watchdog reset during long connection attempts
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to WiFi");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nFailed to connect to WiFi. Retrying...");
+  }
+}
+
+// Function to setup OTA
+void setupOTA() {
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+  
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
+}
+
+// Blynk function to detect button presses on V4 (GPIO 4)
+BLYNK_WRITE(V4) {
+  unsigned long currentTime = millis();
+  
+  // Check if the button was pressed within the last second
+  if (currentTime - lastButtonV4PressTime <= 1000) {
+    buttonV4PressCount++;
+  } else {
+    // Reset the counter if more than one second has passed
+    buttonV4PressCount = 1;
+  }
+
+  lastButtonV4PressTime = currentTime;
+
+  // If the button is pressed twice within one second
+  if (buttonV4PressCount == 2) {
+    // Trigger GPIO 4 (D2) to go HIGH for 5 seconds
+    digitalWrite(pinD2, HIGH);
+    pinD2HighMillis = millis();
+    pinD2IsHigh = true;
+    Serial.println("Button V4 pressed twice! D2 set HIGH for 5 seconds.");
+    
+    // Reset the press counter
+    buttonV4PressCount = 0;
+  }
+}
+
+// Blynk function to detect button presses on V5 (GPIO 5)
+BLYNK_WRITE(V5) {
+  unsigned long currentTime = millis();
+  
+  // Check if the button was pressed within the last second
+  if (currentTime - lastButtonV5PressTime <= 1000) {
+    buttonV5PressCount++;
+  } else {
+    // Reset the counter if more than one second has passed
+    buttonV5PressCount = 1;
+  }
+
+  lastButtonV5PressTime = currentTime;
+
+  // If the button is pressed twice within one second
+  if (buttonV5PressCount == 2) {
+    // Trigger GPIO 5 (D1) to go HIGH for 5 seconds
+    digitalWrite(pinD1, HIGH);
+    pinD1HighMillis = millis();
+    pinD1IsHigh = true;
+    Serial.println("Button V5 pressed twice! D1 set HIGH for 5 seconds.");
+    
+    // Reset the press counter
+    buttonV5PressCount = 0;
+  }
+}
+
+// Function to handle the timers for turning off the pins after 5 seconds
+void handlePinTimers() {
+  unsigned long currentMillis = millis();
+
+  // Turn off pin D1 (GPIO 5) after 5 seconds
+  if (pinD1IsHigh && (currentMillis - pinD1HighMillis >= 5000)) {
+    digitalWrite(pinD1, LOW);  // Turn OFF pin D1
+    pinD1IsHigh = false;  // Reset the flag
+    Serial.println("Pin D1 (GPIO 5) turned OFF after 5 seconds.");
+  }
+
+  // Turn off pin D2 (GPIO 4) after 5 seconds
+  if (pinD2IsHigh && (currentMillis - pinD2HighMillis >= 5000)) {
+    digitalWrite(pinD2, LOW);  // Turn OFF pin D2
+    pinD2IsHigh = false;  // Reset the flag
+    Serial.println("Pin D2 (GPIO 4) turned OFF after 5 seconds.");
+  }
+}
