@@ -1,5 +1,5 @@
 # Blind-Roller
-Blind Roller Remote Controller Using Servo Motor ---> Updated
+Blind Roller Remote Controller Using Servo Motor ---> Updated  -->> Completed
 
 7:30 am blind openning  --NodeMCU D5 digital pin
 19:30 pm blind closin automatically--- D4
@@ -14,7 +14,7 @@ V11: Button twice click feature
 
 
 
-V2------Blind Roller Remote Control Using Step Motor 
+V2------Blind Roller Remote Control Using Step Motor //In Progress 
 
 -I used NEMA17 Step motor to have more certain control over the angles.
 -I used TMC TMC2209 to drive step motor sliently and smoothly as a motor driver
