@@ -17,7 +17,7 @@ V11: Button twice click feature
 V2------Blind Roller Remote Control Using Step Motor //In Progress 
 
 -I used NEMA17 Step motor to have more certain control over the angles.
--I used TMC TMC2209 to drive step motor sliently and smoothly as a motor driver
+-I used TMC2209 to drive the step motor sliently and smoothly.
 -I used NODEMCU ESP8266 - In the future i will use my own self-produced item.
 -I will update box to cover step motor and mount it to the blind roller system ---Designs are made on Fusion 360 and printed by 3D printer by me.
 -I used PLA for cover and used ABS for gear system.
