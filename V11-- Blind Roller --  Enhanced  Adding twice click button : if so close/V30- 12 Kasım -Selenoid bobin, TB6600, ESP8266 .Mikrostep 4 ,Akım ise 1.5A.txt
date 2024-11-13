@@ -1,0 +1,220 @@
+#define BLYNK_TEMPLATE_ID "xxxxx"
+#define BLYNK_TEMPLATE_NAME "xxxx"
+#define BLYNK_AUTH_TOKEN "xxxx"
+const char* ssid = "xxxxx";
+const char* password = "xxxxx";
+
+#include <ESP8266WiFi.h>       
+#include <BlynkSimpleEsp8266.h> 
+#include <ArduinoOTA.h>        
+#include <EEPROM.h>            
+
+#define EN_PIN    D1   
+#define DIR_PIN   D2   
+#define STEP_PIN  D5   
+#define fren      D7   
+
+#define STEPS_PER_TURN 100000
+#define BACKOFF_STEPS (STEPS_PER_TURN / 100)
+#define EN_PIN_DELAY 30000  // 1 dakika (milisaniye cinsinden)
+#define BACKOFF_SPEED 1500  // Geri çekilme için motor hızı
+
+int motorSpeed = 380;  // Normal hareket için motor hızı
+bool motorEnabled = false;
+bool stopRequested = false;
+int stepsToMove = 0;
+int backoffSteps = 0;
+bool inBackoffMode = false;
+int targetSteps = 0;
+int lastPosition = 0;
+unsigned long lastStepTime = 0;
+unsigned long lastWiFiCheck = 0;
+unsigned long enPinTimer = 0;    // EN_PIN için zamanlayıcı
+bool enPinDelayActive = false;   // EN_PIN gecikme durumu
+bool wifiConnected = false;
+
+void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
+    pinMode(DIR_PIN, OUTPUT);
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(EN_PIN, OUTPUT);
+    pinMode(fren, OUTPUT);
+    
+    EEPROM.begin(512);
+    lastPosition = EEPROM.read(0);
+    if (lastPosition < 0 || lastPosition > 10) {
+        lastPosition = 0;
+    }
+
+    connectToWiFi();
+    Blynk.begin(BLYNK_AUTH_TOKEN, ssid, password);
+    digitalWrite(EN_PIN, HIGH);
+
+    Blynk.virtualWrite(V5, lastPosition);
+    Blynk.virtualWrite(V8, motorEnabled ? 1 : 0);
+
+    ArduinoOTA.setHostname("ESP32-OTA");
+    ArduinoOTA.begin();
+}
+
+void loop() {
+    // EN_PIN gecikmesini kontrol et
+    if (enPinDelayActive && (millis() - enPinTimer >= EN_PIN_DELAY)) {
+        digitalWrite(EN_PIN, HIGH);
+        enPinDelayActive = false;
+    }
+
+    if (millis() - lastWiFiCheck > 10000) {
+        lastWiFiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            wifiConnected = false;
+            connectToWiFi();
+        } else if (!wifiConnected) {
+            Blynk.begin(BLYNK_AUTH_TOKEN, ssid, password);
+            wifiConnected = true;
+        }
+    }
+
+    if (wifiConnected) {
+        Blynk.run();
+        ArduinoOTA.handle();
+    }
+
+    if (motorEnabled && !stopRequested) {
+        if (inBackoffMode) {
+            if (backoffSteps > 0) {
+                stepMotor(BACKOFF_SPEED);
+                backoffSteps--;
+            } else {
+                inBackoffMode = false;
+                digitalWrite(DIR_PIN, targetSteps > 0 ? LOW : HIGH);
+                stepsToMove = abs(targetSteps);
+            }
+        } else if (stepsToMove > 0) {
+            stepMotor(motorSpeed);
+            stepsToMove--;
+
+            if (stepsToMove == 0) {
+                finishMotorTurn();
+            }
+        }
+    }
+
+    if (stopRequested) {
+        motorStop();
+        int newSliderValue = calculateSliderValue();
+        Blynk.virtualWrite(V5, newSliderValue);
+        lastPosition = newSliderValue;
+    }
+}
+
+void motorStop() {
+    motorEnabled = false;
+    stepsToMove = 0;
+    backoffSteps = 0;
+    inBackoffMode = false;
+    EEPROM.write(0, lastPosition);
+    EEPROM.commit();
+    
+    // EN_PIN gecikmesini başlat
+    enPinTimer = millis();
+    enPinDelayActive = true;
+    // EN_PIN hemen HIGH yapılmıyor, timer ile kontrol edilecek
+    
+    Blynk.virtualWrite(V8, 0);
+}
+
+int calculateSliderValue() {
+    int position = lastPosition + (stepsToMove / STEPS_PER_TURN);
+    if (position < 1) position = 1;
+    if (position > 10) position = 10;
+    return position;
+}
+
+void connectToWiFi() {
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+    }
+}
+
+void stepMotor(int speed) {
+    if (micros() - lastStepTime >= speed) {
+        digitalWrite(STEP_PIN, HIGH);
+        delayMicroseconds(1);
+        digitalWrite(STEP_PIN, LOW);
+        lastStepTime = micros();
+    }
+}
+
+BLYNK_WRITE(V5) {
+    int targetValue = param.asInt();
+    
+    if (targetValue < 1) {
+        targetValue = 1;
+    } else if (targetValue > 10) {
+        targetValue = 10;
+    }
+
+    targetSteps = (targetValue - lastPosition) * STEPS_PER_TURN;
+
+    // EN_PIN durumunu kontrol et
+    if (digitalRead(EN_PIN) == HIGH) {
+        // EN_PIN HIGH ise geri çekilme yap
+        digitalWrite(DIR_PIN, targetSteps > 0 ? HIGH : LOW);
+        backoffSteps = BACKOFF_STEPS;
+        inBackoffMode = true;
+    } else {
+        // EN_PIN LOW ise direkt hedefe git
+        digitalWrite(DIR_PIN, targetSteps > 0 ? LOW : HIGH);
+        stepsToMove = abs(targetSteps);
+        inBackoffMode = false;
+    }
+    
+    lastPosition = targetValue;
+
+    if (!stopRequested) {
+        digitalWrite(fren, HIGH);
+        motorEnabled = true;
+        digitalWrite(EN_PIN, LOW);
+        Blynk.virtualWrite(V8, 1);
+    }
+}
+
+BLYNK_WRITE(V6) {
+    bool buttonState = param.asInt();
+    if (buttonState == 1) {
+        stopRequested = true;
+    } else {
+        stopRequested = false;
+        digitalWrite(EN_PIN, LOW);
+    }
+    
+    digitalWrite(fren, LOW);
+    digitalWrite(EN_PIN, HIGH);
+}
+
+BLYNK_WRITE(V7) {
+    motorSpeed = param.asInt();
+}
+
+BLYNK_WRITE(V8) {
+    int enableState = param.asInt();
+    if (enableState == 1) {
+        digitalWrite(fren, LOW);
+        motorEnabled = true;
+        Blynk.virtualWrite(V8, 1);
+    } else {
+        digitalWrite(fren, HIGH);
+        motorEnabled = false;
+        Blynk.virtualWrite(V8, 0);
+    }
+}
+
+void finishMotorTurn() {
+    digitalWrite(fren, LOW);
+    // EN_PIN gecikmesini başlat
+    enPinTimer = millis();
+    enPinDelayActive = true;
+}
