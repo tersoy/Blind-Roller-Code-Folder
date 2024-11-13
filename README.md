@@ -9,6 +9,16 @@
 -I used PLA for cover and used ABS for gear system.
 -I will be sharing STL files and NODEMCU codes on this page.
 
+Structure changed:
+- I used TB6600 instead of TMC2209,2208,DRV8825,A4898,TMC2130  because of the torq needs of the load.
+
+Power usage reducing and electricty outage caution.
+-Added Selenoid Coil to stop motor gear physically to reduce
+
+Next Plans:
+- I will add current controller to the ESP8266
+-I will add temperature control device one for Selenoid Coil one for ESP8266 to stop overheating risk.
+-
 
 
 
