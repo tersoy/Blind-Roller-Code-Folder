@@ -1,0 +1,9 @@
+Not arduinodaki sorundan dolayı aşağıdaki değişiklikleri henuz uygulayamadım.
+
+
+
+1- slider den bir değer aldıgında motor donmeyı durdurana kadar yeni bir değer almıyor
+2- slider sürekli guncelleniyor
+3- dura bastıgın an bile slider guncelleniyor
+4- selenoid bobin devreye girmeden 50ms bekleniyor. akabinde 9 sn sonra En pin deaktif oluyor.
+5- başlangıc hızı 450 olarak ayarladım.
