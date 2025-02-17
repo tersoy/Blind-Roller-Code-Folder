@@ -1,0 +1,166 @@
+#define BLYNK_TEMPLATE_ID "xxxxx"
+#define BLYNK_TEMPLATE_NAME "xxxxx"
+#define blynkAuth "xxxxxxxxx"
+const char* ssid = "xxxxxx";
+const char* password = "xxxxx";
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <ArduinoOTA.h>
+
+#define EN_PIN     19
+#define DIR_PIN    18
+#define STEP_PIN   17
+#define FREN_PIN   16
+
+#define STEPS_PER_TURN 30000
+#define BACKOFF_SPEED 1500
+
+int motorSpeed = 250;  // Başlangıç hızı
+bool motorRunning = false;
+bool stopRequested = false;
+unsigned long lastWiFiCheck = 0;
+bool wifiConnected = false;
+
+const long INITIAL_STEPS = 10; // İlk adım sayısı
+bool initialRotationComplete = false;
+long stepCounter = 0;
+
+void setup() {
+    Serial.begin(115200);
+
+    // Bluetooth'u kapat
+    btStop();
+
+    pinMode(DIR_PIN, OUTPUT);
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(EN_PIN, OUTPUT);
+    pinMode(FREN_PIN, OUTPUT);
+
+    connectToWiFi();
+    Blynk.config(blynkAuth);
+    Blynk.connect();
+
+    // Motor her zaman deaktif
+    digitalWrite(EN_PIN, HIGH);
+    digitalWrite(FREN_PIN, LOW);
+
+    ArduinoOTA.setHostname("ESP32-OTA");
+    ArduinoOTA.begin();
+}
+
+void loop() {
+    // WiFi ve Blynk bağlantı kontrolü
+    if (millis() - lastWiFiCheck > 10000) {
+        lastWiFiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            wifiConnected = false;
+            connectToWiFi();
+        } else if (!wifiConnected) {
+            Blynk.connect();
+            wifiConnected = true;
+        }
+    }
+
+    if (wifiConnected) {
+        Blynk.run();
+        ArduinoOTA.handle();
+    }
+
+    // Motor hareket kontrolü
+    if (motorRunning && !stopRequested) {
+        stepMotor();
+    }
+
+    if (stopRequested) {
+        stopMotor();
+    }
+}
+
+void stepMotor() {
+    static unsigned long lastStepTime = 0;
+    if (micros() - lastStepTime >= motorSpeed) {
+        digitalWrite(STEP_PIN, HIGH);
+        delayMicroseconds(1);
+        digitalWrite(STEP_PIN, LOW);
+        lastStepTime = micros();
+        stepCounter++;  // Adım sayısını artır
+    }
+}
+
+void stopMotor() {
+    motorRunning = false;
+    digitalWrite(FREN_PIN, LOW);  // Freni aktif et
+    digitalWrite(EN_PIN, HIGH);   //Motor disable et
+    initialRotationComplete = false;
+    stepCounter = 0;
+}
+
+void connectToWiFi() {
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("WiFi bağlandı");
+}
+
+// V5 için Hareket
+BLYNK_WRITE(V5) {
+  motorSpeed = 150;  // Normal hıza geri dön
+    int buttonState = param.asInt();
+    if (buttonState == 1 && !motorRunning) {
+        digitalWrite(DIR_PIN, LOW);  // Sadece LOW yönde döner
+        motorRunning = true;
+        digitalWrite(EN_PIN, LOW);
+        digitalWrite(FREN_PIN, HIGH);
+    } else if (buttonState == 0) {
+        stopMotor();
+    }
+}
+
+// V0 için Hareket
+BLYNK_WRITE(V0) {
+    int buttonState = param.asInt();
+
+    if (buttonState == 1 && !motorRunning) {
+        // İlk ayarlar
+        digitalWrite(DIR_PIN, LOW);  // İlk 100 adım için yön LOW
+        initialRotationComplete = false;
+        stepCounter = 0;
+        motorSpeed = 1500;  // İlk 100 adım hızı
+        motorRunning = true;
+        digitalWrite(EN_PIN, LOW);  // Motoru enable et
+        digitalWrite(FREN_PIN, HIGH);  // Freni aç
+
+        // İlk 100 adım boyunca yön LOW
+        while (stepCounter < 50) {
+            if (!motorRunning) break;  // Buton bırakılmışsa çık
+            digitalWrite(STEP_PIN, HIGH);
+            delayMicroseconds(motorSpeed);
+            digitalWrite(STEP_PIN, LOW);
+            delayMicroseconds(motorSpeed);
+            stepCounter++;
+        }
+
+        // İlk 100 adımdan sonra yön HIGH ve normal hıza geç
+        if (motorRunning) {
+            digitalWrite(DIR_PIN, HIGH);  // Yönü HIGH yap
+            motorSpeed = 150;  // Normal hıza geri dön
+        }
+    } 
+    else if (buttonState == 0) {
+        // Buton bırakıldıysa motoru durdur
+        stopMotor();
+    }
+}
+
+// Stop Butonu
+BLYNK_WRITE(V6) {
+    stopRequested = param.asInt() == 1;
+}
+
+// Motor Hız Kontrolü
+BLYNK_WRITE(V7) {
+    motorSpeed = param.asInt();
+}
